@@ -3,6 +3,7 @@ import re
 from json import dump, load
 from bs4 import BeautifulSoup
 from openbabel.pybel import readstring
+from pymatgen.io.babel import BabelMolAdaptor
 from selfies import encoder
 
 # from pymongo.errors import DuplicateKeyError, ConnectionFailure
@@ -213,6 +214,73 @@ class ReaxysParser2:
         with open(reaction_json) as f:
             reactions = load(f)
 
+            print(len(reactions))
+            removed_reac_indices = []
+
+            for reaction_index, reaction in enumerate(reactions):
+
+                reactspecies = set()
+                prodspecies = set()
+
+                for prodstring in reaction["products"]["smiles"]:
+                    prodmol = BabelMolAdaptor.from_string(prodstring, file_format="smi")
+                    prodmol.add_hydrogen()
+                    for site in prodmol.pymatgen_mol:
+                        prodspecies.add(str(site.specie))
+
+                for reactstring in reaction["reactants"]["smiles"]:
+                    reactmol = BabelMolAdaptor.from_string(reactstring, file_format="smi")
+                    reactmol.add_hydrogen()
+                    for site in reactmol.pymatgen_mol:
+                        reactspecies.add(str(site.specie))
+
+                if prodspecies.issubset(reactspecies):
+                    continue
+
+                else:
+                    species_difference = prodspecies.difference(reactspecies)
+                    removed_proc_indices = []
+
+                    for procedure_index, procedure in enumerate(reaction["procedures"]):
+                        substspecies = set()
+
+                        for reagstring in procedure["reagents"]["smiles"]:
+                            reagmol = BabelMolAdaptor.from_string(reagstring, file_format="smi")
+                            reagmol.add_hydrogen()
+                            print(reagstring)
+                            for site in reagmol.pymatgen_mol:
+                                substspecies.add(str(site.specie))
+
+                        for solvstring in procedure["solvents"]["smiles"]:
+                            solvmol = BabelMolAdaptor.from_string(solvstring, file_format="smi")
+                            solvmol.add_hydrogen()
+                            for site in solvmol.pymatgen_mol:
+                                substspecies.add(str(site.specie))
+
+                        if species_difference.issubset(substspecies):
+                            continue
+                        else:
+                            removed_proc_indices.append(procedure_index)
+
+                    # reverse sorts procedure indices and deletes from the back
+                    removed_proc_indices.sort(reverse=True)
+                    for removed_proc_index in removed_proc_indices:
+                        reaction["procedures"].pop(removed_proc_index)
+
+                # sets changes back into the original reactions list
+                reactions[reaction_index] = reaction
+
+                # if zero procedures are left after this, adds index to list of reactions to be deleted
+                if len(reaction["procedures"]) == 0:
+                    removed_reac_indices.append(reaction_index)
+
+            # reverse sorts reaction indices and deletes from the back
+            removed_reac_indices.sort(reverse=True)
+            for removed_reac_index in removed_reac_indices:
+                reactions.pop(removed_reac_index)
+
+        print(len(reactions))
+
         return reactions
 
 
@@ -223,6 +291,7 @@ class ReaxysParser2:
         :param filename: name of JSON file without extension
         :return: bool if successful in saving file
         """
+        print(filename+": "+str(len(dict_list)))
         try:
             with open(filename + ".json", "w") as outfile:
                 dump(dict_list, outfile)
@@ -241,7 +310,7 @@ while i < 80000:
     filename = "electrochemical_" + str(i+1) + "_" + str(i+5000)
     filenames.append(filename)
     i+=5000
-
+"""
 for index, file in enumerate(filenames):
     results = parser.replace_rn(file+".json", "reagents.json")
     parser.save_to_json(results, file+"_updated")
@@ -251,12 +320,7 @@ parser.combiner(filenames, "total_reactions_with_duplicates")
 
 results = parser.delete_duplicates("total_reactions_with_duplicates.json")
 parser.save_to_json(results, "total_reactions_without_duplicates")
+"""
 
-
-
-
-
-
-
-
+parser.get_balanced_reactions("reduction_1_2524_updated.json")
 
